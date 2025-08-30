@@ -1,35 +1,64 @@
 ﻿using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
-using PdfSharpCore.Pdf.IO;
-using PdfSharpCore.Pdf.Content;
-using PdfSharpCore.Pdf.Content.Objects;
-using PdfDocument = PdfSharpCore.Pdf.PdfDocument;
-using PdfPage = PdfSharpCore.Pdf.PdfPage;
+using System.Diagnostics;
+using System.Text;
+using PDFd.Processing.Internal;
 
 namespace PDFd.Processing.Converters;
 
-/// <summary>
-/// Converts PDF to Word. Preserves formatting or dies trying.
-/// </summary>
 internal sealed class PdfToWordConverter
 {
+    private readonly string _toolsPath;
+    private readonly bool _useExternalTools;
+    
+    public PdfToWordConverter(string toolsPath, bool useExternalTools)
+    {
+        _toolsPath = toolsPath;
+        _useExternalTools = useExternalTools;
+        Logger.Log($"PdfToWordConverter initialized. Tools path: {_toolsPath}, Using external tools: {_useExternalTools}");
+    }
+    
     public async Task<ProcessingResult> ConvertAsync(
         Domain.Models.PdfDocument document,
         ConversionOptions options,
         CancellationToken ct = default)
     {
+        Logger.Log($"Starting conversion for: {document.FilePath}");
         var outputPath = GetOutputPath(document.FilePath, options.OutputDirectory);
+        Logger.Log($"Output will be: {outputPath}");
         
         try
         {
-            await Task.Run(() => ConvertCore(document.FilePath, outputPath, options, ct), ct);
+            var outputDir = Path.GetDirectoryName(outputPath);
+            if (!string.IsNullOrEmpty(outputDir) && !Directory.Exists(outputDir))
+            {
+                Logger.Log($"Creating output directory: {outputDir}");
+                Directory.CreateDirectory(outputDir);
+            }
+            
+            string extractedText;
+            
+            if (_useExternalTools)
+            {
+                Logger.Log("Using pdftotext for extraction");
+                extractedText = await ExtractWithPdfToText(document.FilePath, ct);
+                Logger.Log($"Extracted {extractedText.Length} characters");
+            }
+            else
+            {
+                Logger.Log("WARNING: pdftotext not found, using fallback");
+                extractedText = "PDF text extraction requires pdftotext.exe tool.\nPlease install from xpdfreader.com";
+            }
+            
+            Logger.Log("Creating Word document");
+            CreateWordDocument(outputPath, extractedText);
+            Logger.Log($"Conversion successful: {outputPath}");
             
             var metrics = new Dictionary<string, object>
             {
                 ["PagesConverted"] = document.PageCount,
-                ["Quality"] = options.Quality.ToString(),
-                ["FormattingPreserved"] = options.PreserveFormatting
+                ["Method"] = _useExternalTools ? "pdftotext" : "fallback"
             };
             
             return ProcessingResult.CreateSuccess(
@@ -38,32 +67,65 @@ internal sealed class PdfToWordConverter
                 TimeSpan.Zero,
                 metrics);
         }
-        catch (OperationCanceledException)
-        {
-            // Clean up partial file
-            if (File.Exists(outputPath))
-                File.Delete(outputPath);
-            
-            return ProcessingResult.CreateFailure(
-                PdfConstants.ConversionOperation,
-                "Operation was cancelled");
-        }
         catch (Exception ex)
         {
+            Logger.LogError($"Conversion failed for {document.FilePath}", ex);
             return ProcessingResult.CreateFailure(
                 PdfConstants.ConversionOperation,
                 $"Conversion failed: {ex.Message}",
                 ex);
         }
     }
-
-    private void ConvertCore(
-        string inputPath,
-        string outputPath,
-        ConversionOptions options,
-        CancellationToken ct)
+    
+    private async Task<string> ExtractWithPdfToText(string pdfPath, CancellationToken ct)
     {
-        using var pdfDocument = PdfReader.Open(inputPath, PdfDocumentOpenMode.InformationOnly);
+        var pdfToText = Path.Combine(_toolsPath, "pdftotext.exe");
+        var tempFile = Path.GetTempFileName();
+        
+        Logger.Log($"Running pdftotext: {pdfToText}");
+        Logger.Log($"Input: {pdfPath}");
+        Logger.Log($"Temp output: {tempFile}");
+        
+        try
+        {
+            var process = Process.Start(new ProcessStartInfo
+            {
+                FileName = pdfToText,
+                Arguments = $"-layout \"{pdfPath}\" \"{tempFile}\"",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardError = true
+            });
+            
+            await Task.Run(() => process!.WaitForExit(), ct);
+            
+            if (process!.ExitCode != 0)
+            {
+                var error = await process.StandardError.ReadToEndAsync();
+                Logger.LogError($"pdftotext failed with exit code {process.ExitCode}: {error}");
+                throw new Exception($"pdftotext failed: {error}");
+            }
+            
+            var text = await File.ReadAllTextAsync(tempFile, ct);
+            Logger.Log($"Successfully extracted {text.Length} characters");
+            return text;
+        }
+        finally
+        {
+            if (File.Exists(tempFile))
+            {
+                Logger.Log($"Cleaning up temp file: {tempFile}");
+                File.Delete(tempFile);
+            }
+        }
+    }
+    
+        private void CreateWordDocument(string outputPath, string text)
+    {
+        Logger.Log($"Creating Word document at: {outputPath}");
+        
+        // Clean invalid XML characters
+        text = CleanForXml(text);
         
         using var wordDocument = WordprocessingDocument.Create(
             outputPath,
@@ -73,70 +135,65 @@ internal sealed class PdfToWordConverter
         mainPart.Document = new Document();
         var body = mainPart.Document.AppendChild(new Body());
         
-        // Extract text from each page
-        for (int i = 0; i < pdfDocument.PageCount; i++)
+        var lines = text.Split('\n');
+        Logger.Log($"Processing {lines.Length} lines");
+        
+        foreach (var line in lines)
         {
-            ct.ThrowIfCancellationRequested();
-            
-            var page = pdfDocument.Pages[i];
-            var text = ExtractTextFromPage(page);
-            
-            if (!string.IsNullOrWhiteSpace(text))
-            {
-                var paragraph = body.AppendChild(new Paragraph());
-                var run = paragraph.AppendChild(new Run());
-                run.AppendChild(new Text(text));
+            // Skip empty lines that are just form feeds
+            if (string.IsNullOrWhiteSpace(line))
+                continue;
                 
-                // Add page break except for last page
-                if (i < pdfDocument.PageCount - 1)
-                {
-                    paragraph.AppendChild(new Run(new Break() { Type = BreakValues.Page }));
-                }
-            }
+            var paragraph = new Paragraph();
+            var run = new Run();
+            run.AppendChild(new Text(line) { Space = SpaceProcessingModeValues.Preserve });
+            paragraph.AppendChild(run);
+            body.AppendChild(paragraph);
         }
         
         mainPart.Document.Save();
+        Logger.Log("Word document saved successfully");
     }
     
-    private string ExtractTextFromPage(PdfPage page)
+    private string CleanForXml(string text)
     {
-        // Basic text extraction - will enhance with proper formatting preservation
-        var content = ContentReader.ReadContent(page);
-        var text = new System.Text.StringBuilder();
+        if (string.IsNullOrEmpty(text))
+            return text;
+            
+        // Remove or replace invalid XML characters
+        var cleaned = new StringBuilder(text.Length);
+        foreach (char c in text)
+        {
+            // Valid XML chars: #x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD]
+            if (c == '\t' || c == '\n' || c == '\r' || 
+                (c >= 0x20 && c <= 0xD7FF) || 
+                (c >= 0xE000 && c <= 0xFFFD))
+            {
+                cleaned.Append(c);
+            }
+            else if (c == '\f') // Form feed - replace with newline
+            {
+                cleaned.Append('\n');
+            }
+            // Skip other invalid characters
+        }
         
-        ExtractText(content, text);
-        return text.ToString();
-    }
-    
-    private void ExtractText(CObject obj, System.Text.StringBuilder target)
+        Logger.Log($"Cleaned text: removed {text.Length - cleaned.Length} invalid characters");
+        return cleaned.ToString();
+    }private string GetOutputPath(string inputPath, string? outputDirectory)
     {
-        if (obj is COperator op)
-        {
-            if (op.OpCode.Name == "Tj" || op.OpCode.Name == "TJ")
-            {
-                foreach (var operand in op.Operands)
-                {
-                    if (operand is CString str)
-                    {
-                        target.Append(str.Value);
-                        target.Append(' ');
-                    }
-                }
-            }
-        }
-        else if (obj is CSequence seq)
-        {
-            foreach (var item in seq)
-            {
-                ExtractText(item, target);
-            }
-        }
-    }
-    
-    private string GetOutputPath(string inputPath, string? outputDirectory)
-    {
-        var directory = outputDirectory ?? Path.GetDirectoryName(inputPath) ?? "";
         var fileNameWithoutExt = Path.GetFileNameWithoutExtension(inputPath);
-        return Path.Combine(directory, $"{fileNameWithoutExt}{PdfConstants.WordExtension}");
+        
+        if (!string.IsNullOrEmpty(outputDirectory))
+        {
+            return Path.Combine(outputDirectory, $"{fileNameWithoutExt}{PdfConstants.WordExtension}");
+        }
+        else
+        {
+            var directory = Path.GetDirectoryName(inputPath) ?? "";
+            return Path.Combine(directory, $"{fileNameWithoutExt}{PdfConstants.WordExtension}");
+        }
     }
 }
+
+

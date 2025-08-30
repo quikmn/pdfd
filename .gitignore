@@ -57,3 +57,7 @@ BenchmarkDotNet.Artifacts/
 !.vscode/settings.json
 !.vscode/tasks.json
 !.vscode/launch.json
+
+# External tools (users should download)
+PDFd.UI/Tools/*.exe
+PDFd.UI/Tools/*.dll

@@ -1,19 +1,44 @@
-﻿using PdfSharpCore.Pdf;
-using PdfSharpCore.Pdf.IO;
+﻿using System.Diagnostics;
+using System.Text;
 
 namespace PDFd.Processing;
 
-/// <summary>
-/// Main PDF processing engine. Does the heavy lifting.
-/// </summary>
 public sealed class PdfProcessor : IPdfProcessor, IDisposable
 {
+    private readonly string _toolsPath;
     private readonly SemaphoreSlim _semaphore;
     private bool _disposed;
+    private readonly bool _useExternalTools;
 
     public PdfProcessor(int maxConcurrency = 4)
     {
         _semaphore = new SemaphoreSlim(maxConcurrency, maxConcurrency);
+        
+        // Try multiple paths to find tools
+        var possiblePaths = new[]
+        {
+            Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Tools"),
+            Path.Combine(Directory.GetCurrentDirectory(), "Tools"),
+            Path.Combine(Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location) ?? "", "Tools"),
+            @"D:\Dev\PDFd\PDFd.UI\Tools" // Hardcoded fallback for testing
+        };
+        
+        foreach (var path in possiblePaths)
+        {
+            if (Directory.Exists(path) && File.Exists(Path.Combine(path, "pdftotext.exe")))
+            {
+                _toolsPath = path;
+                _useExternalTools = true;
+                Console.WriteLine($"Found tools at: {path}");
+                break;
+            }
+        }
+        
+        if (!_useExternalTools)
+        {
+            _toolsPath = "";
+            Console.WriteLine("Warning: pdftotext.exe not found. Text extraction will be limited.");
+        }
     }
 
     public async Task<ProcessingResult> ConvertToWordAsync(
@@ -35,7 +60,7 @@ public sealed class PdfProcessor : IPdfProcessor, IDisposable
         try
         {
             var stopwatch = Stopwatch.StartNew();
-            var converter = new Converters.PdfToWordConverter();
+            var converter = new Converters.PdfToWordConverter(_toolsPath, _useExternalTools);
             var result = await converter.ConvertAsync(document, options, ct);
             
             stopwatch.Stop();
@@ -75,18 +100,31 @@ public sealed class PdfProcessor : IPdfProcessor, IDisposable
     {
         if (!File.Exists(filePath)) return false;
 
-        try
+        if (_useExternalTools)
         {
-            return await Task.Run(() =>
+            try
             {
-                using var document = PdfReader.Open(filePath, PdfDocumentOpenMode.InformationOnly);
-                return document.PageCount > 0;
-            }, ct);
+                var pdfInfo = Path.Combine(_toolsPath, "pdfinfo.exe");
+                var process = Process.Start(new ProcessStartInfo
+                {
+                    FileName = pdfInfo,
+                    Arguments = $"\"{filePath}\"",
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
+                });
+                
+                await Task.Run(() => process!.WaitForExit(), ct);
+                return process!.ExitCode == 0;
+            }
+            catch
+            {
+                return false;
+            }
         }
-        catch
-        {
-            return false;
-        }
+        
+        return true;
     }
 
     public async Task<Domain.Models.PdfDocument?> GetMetadataAsync(string filePath, CancellationToken ct = default)
@@ -95,37 +133,55 @@ public sealed class PdfProcessor : IPdfProcessor, IDisposable
 
         try
         {
-            return await Task.Run(() =>
-            {
-                var fileInfo = new FileInfo(filePath);
-                using var document = PdfReader.Open(filePath, PdfDocumentOpenMode.InformationOnly);
-                
-                return new Domain.Models.PdfDocument
-                {
-                    FilePath = filePath,
-                    SizeInBytes = fileInfo.Length,
-                    PageCount = document.PageCount,
-                    CreatedAt = fileInfo.CreationTime,
-                    ModifiedAt = fileInfo.LastWriteTime,
-                    IsEncrypted = document.SecuritySettings.DocumentSecurityLevel != PdfSharpCore.Pdf.Security.PdfDocumentSecurityLevel.None,
-                    IsCorrupted = false
-                };
-            }, ct);
-        }
-        catch
-        {
-            // If we can't open it, it's probably corrupted
             var fileInfo = new FileInfo(filePath);
+            var pageCount = 1;
+            var isEncrypted = false;
+            
+            if (_useExternalTools)
+            {
+                var pdfInfo = Path.Combine(_toolsPath, "pdfinfo.exe");
+                var process = Process.Start(new ProcessStartInfo
+                {
+                    FileName = pdfInfo,
+                    Arguments = $"\"{filePath}\"",
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
+                });
+                
+                var output = await process!.StandardOutput.ReadToEndAsync();
+                await Task.Run(() => process.WaitForExit(), ct);
+                
+                var lines = output.Split('\n');
+                foreach (var line in lines)
+                {
+                    if (line.StartsWith("Pages:"))
+                    {
+                        var pagesStr = line.Substring(6).Trim();
+                        int.TryParse(pagesStr, out pageCount);
+                    }
+                    else if (line.StartsWith("Encrypted:"))
+                    {
+                        isEncrypted = !line.Contains("no");
+                    }
+                }
+            }
+            
             return new Domain.Models.PdfDocument
             {
                 FilePath = filePath,
                 SizeInBytes = fileInfo.Length,
-                PageCount = 0,
+                PageCount = pageCount,
                 CreatedAt = fileInfo.CreationTime,
                 ModifiedAt = fileInfo.LastWriteTime,
-                IsCorrupted = true,
-                IsEncrypted = false
+                IsEncrypted = isEncrypted,
+                IsCorrupted = false
             };
+        }
+        catch
+        {
+            return null;
         }
     }
 

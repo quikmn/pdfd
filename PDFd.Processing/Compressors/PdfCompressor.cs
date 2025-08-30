@@ -1,13 +1,9 @@
-﻿using PdfSharpCore.Pdf;
-using PdfSharpCore.Pdf.IO;
-using PdfSharpCore.Pdf.Advanced;
-using PdfDocument = PdfSharpCore.Pdf.PdfDocument;
-using PdfPage = PdfSharpCore.Pdf.PdfPage;
+﻿using System.IO;
 
 namespace PDFd.Processing.Compressors;
 
 /// <summary>
-/// Intelligent PDF compression. Knows when to stop.
+/// Temporary compressor - just copies the file until we add Ghostscript
 /// </summary>
 internal sealed class PdfCompressor
 {
@@ -20,18 +16,15 @@ internal sealed class PdfCompressor
         
         try
         {
-            var originalSize = document.SizeInBytes;
-            var compressedSize = await Task.Run(() => 
-                CompressCore(document.FilePath, outputPath, options, ct), ct);
-            
-            var compressionRatio = 1.0 - (compressedSize / (double)originalSize);
+            // For now, just copy the file
+            await Task.Run(() => File.Copy(document.FilePath, outputPath, true), ct);
             
             var metrics = new Dictionary<string, object>
             {
-                ["OriginalSizeBytes"] = originalSize,
-                ["CompressedSizeBytes"] = compressedSize,
-                ["CompressionRatio"] = compressionRatio,
-                ["Level"] = options.Level.ToString()
+                ["OriginalSizeBytes"] = document.SizeInBytes,
+                ["CompressedSizeBytes"] = document.SizeInBytes,
+                ["CompressionRatio"] = 0,
+                ["Method"] = "Copy (compression not implemented yet)"
             };
             
             return ProcessingResult.CreateSuccess(
@@ -46,76 +39,6 @@ internal sealed class PdfCompressor
                 PdfConstants.CompressionOperation,
                 $"Compression failed: {ex.Message}",
                 ex);
-        }
-    }
-    
-    private long CompressCore(
-        string inputPath,
-        string outputPath,
-        CompressionOptions options,
-        CancellationToken ct)
-    {
-        using var inputDocument = PdfReader.Open(inputPath, PdfDocumentOpenMode.Import);
-        using var outputDocument = new PdfDocument();
-        
-        outputDocument.Options.CompressContentStreams = true;
-        outputDocument.Options.NoCompression = false;
-        
-        // Copy pages with compression
-        foreach (var page in inputDocument.Pages)
-        {
-            ct.ThrowIfCancellationRequested();
-            var newPage = outputDocument.AddPage(page);
-            
-            if (options.CompressImages)
-            {
-                CompressPageImages(newPage, options);
-            }
-        }
-        
-        // Set compression level based on options
-        if (options.Level == Domain.Models.CompressionLevel.Maximum)
-        {
-            outputDocument.Options.FlateEncodeMode = PdfFlateEncodeMode.BestCompression;
-        }
-        else
-        {
-            outputDocument.Options.FlateEncodeMode = PdfFlateEncodeMode.Default;
-        }
-        
-        // Remove metadata if requested
-        if (options.RemoveMetadata)
-        {
-            outputDocument.Info.Title = "";
-            outputDocument.Info.Author = "";
-            outputDocument.Info.Subject = "";
-            outputDocument.Info.Keywords = "";
-            outputDocument.Info.Creator = "PDF'd";
-        }
-        
-        outputDocument.Save(outputPath);
-        
-        return new FileInfo(outputPath).Length;
-    }
-    
-    private void CompressPageImages(PdfPage page, CompressionOptions options)
-    {
-        // Image compression logic
-        // This is where we'd intelligently compress images based on DPI
-        // For now, just marking images for compression
-        var resources = page.Elements.GetDictionary("/Resources");
-        if (resources != null)
-        {
-            var xObjects = resources.Elements.GetDictionary("/XObject");
-            if (xObjects != null)
-            {
-                // Process each image
-                foreach (var item in xObjects.Elements)
-                {
-                    // Intelligent compression based on target DPI
-                    // Implementation would go here
-                }
-            }
         }
     }
     

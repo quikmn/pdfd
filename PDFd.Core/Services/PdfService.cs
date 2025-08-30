@@ -7,7 +7,11 @@ public sealed class PdfService : IDisposable
 {
     private readonly IPdfProcessor _processor;
     private readonly IBatchProcessor _batchProcessor;
+    private readonly List<Domain.Models.ProcessingHistoryItem> _history = new();
     private bool _disposed;
+    
+    public string? OutputDirectory { get; set; }
+    public IReadOnlyList<Domain.Models.ProcessingHistoryItem> ProcessingHistory => _history;
     
     public PdfService()
     {
@@ -28,15 +32,26 @@ public sealed class PdfService : IDisposable
         var metadata = await _processor.GetMetadataAsync(filePath, ct);
         if (metadata == null)
         {
-            return ProcessingResult.CreateFailure(
+            var failureResult = ProcessingResult.CreateFailure(
                 "CONVERT",
                 $"Could not read PDF: {Path.GetFileName(filePath)}");
+            
+            AddToHistory(filePath, "Convert to Word", false, null, failureResult.ErrorMessage);
+            return failureResult;
         }
         
-        return await _processor.ConvertToWordAsync(
-            metadata,
-            options ?? ConversionOptions.Default,
-            ct);
+        // Use custom output directory if set
+        var optionsWithOutput = (options ?? ConversionOptions.Default) with 
+        { 
+            OutputDirectory = OutputDirectory 
+        };
+        
+        var result = await _processor.ConvertToWordAsync(metadata, optionsWithOutput, ct);
+        
+        AddToHistory(filePath, "Convert to Word", result.Success, 
+            result.OutputPath, result.ErrorMessage, metadata.SizeInBytes);
+        
+        return result;
     }
     
     /// <summary>
@@ -52,15 +67,23 @@ public sealed class PdfService : IDisposable
         var metadata = await _processor.GetMetadataAsync(filePath, ct);
         if (metadata == null)
         {
-            return ProcessingResult.CreateFailure(
+            var failureResult = ProcessingResult.CreateFailure(
                 "COMPRESS",
                 $"Could not read PDF: {Path.GetFileName(filePath)}");
+            
+            AddToHistory(filePath, "Compress", false, null, failureResult.ErrorMessage);
+            return failureResult;
         }
         
-        return await _processor.CompressAsync(
+        var result = await _processor.CompressAsync(
             metadata,
             options ?? CompressionOptions.Balanced,
             ct);
+        
+        AddToHistory(filePath, "Compress", result.Success, 
+            result.OutputPath, result.ErrorMessage, metadata.SizeInBytes);
+        
+        return result;
     }
     
     /// <summary>
@@ -72,12 +95,23 @@ public sealed class PdfService : IDisposable
         IProgress<BatchOperation>? progress = null,
         CancellationToken ct = default)
     {
-        Func<PdfDocument, CancellationToken, Task<ProcessingResult>> operation = operationType switch
+        Func<Domain.Models.PdfDocument, CancellationToken, Task<ProcessingResult>> operation = operationType switch
         {
-            BatchOperationType.ConvertToWord => (doc, token) => 
-                _processor.ConvertToWordAsync(doc, ConversionOptions.Default, token),
-            BatchOperationType.Compress => (doc, token) => 
-                _processor.CompressAsync(doc, CompressionOptions.Balanced, token),
+            BatchOperationType.ConvertToWord => async (doc, token) => 
+            {
+                var options = ConversionOptions.Default with { OutputDirectory = OutputDirectory };
+                var result = await _processor.ConvertToWordAsync(doc, options, token);
+                AddToHistory(doc.FilePath, "Convert to Word", result.Success, 
+                    result.OutputPath, result.ErrorMessage, doc.SizeInBytes);
+                return result;
+            },
+            BatchOperationType.Compress => async (doc, token) => 
+            {
+                var result = await _processor.CompressAsync(doc, CompressionOptions.Balanced, token);
+                AddToHistory(doc.FilePath, "Compress", result.Success, 
+                    result.OutputPath, result.ErrorMessage, doc.SizeInBytes);
+                return result;
+            },
             _ => throw new ArgumentException($"Unknown operation: {operationType}")
         };
         
@@ -95,9 +129,46 @@ public sealed class PdfService : IDisposable
     /// <summary>
     /// Get PDF metadata without processing
     /// </summary>
-    public async Task<PdfDocument?> GetPdfMetadataAsync(string filePath, CancellationToken ct = default)
+    public async Task<Domain.Models.PdfDocument?> GetPdfMetadataAsync(string filePath, CancellationToken ct = default)
     {
         return await _processor.GetMetadataAsync(filePath, ct);
+    }
+    
+    /// <summary>
+    /// Clear processing history
+    /// </summary>
+    public void ClearHistory()
+    {
+        _history.Clear();
+    }
+    
+    /// <summary>
+    /// Get recent history items
+    /// </summary>
+    public IEnumerable<Domain.Models.ProcessingHistoryItem> GetRecentHistory(int count = 10)
+    {
+        return _history.OrderByDescending(h => h.ProcessedAt).Take(count);
+    }
+    
+    private void AddToHistory(string filePath, string operation, bool success, 
+        string? outputPath, string? errorMessage, long? fileSizeBytes = null)
+    {
+        _history.Add(new Domain.Models.ProcessingHistoryItem
+        {
+            FileName = Path.GetFileName(filePath),
+            Operation = operation,
+            Success = success,
+            ProcessedAt = DateTime.Now,
+            OutputPath = outputPath,
+            ErrorMessage = errorMessage,
+            FileSizeBytes = fileSizeBytes
+        });
+        
+        // Keep only last 100 items
+        if (_history.Count > 100)
+        {
+            _history.RemoveAt(0);
+        }
     }
     
     public void Dispose()
