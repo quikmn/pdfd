@@ -1,46 +1,50 @@
-﻿using System.Windows;
+﻿using Microsoft.Extensions.DependencyInjection;
+using PDFd.Core.Interfaces;
+using PDFd.Core.Services;
+using PDFd.UI.ViewModels;
+using PDFd.UI.Views;
+using System;
+using System.Windows;
 
-namespace PDFd.UI;
-
-public partial class App : Application
+namespace PDFd.UI
 {
-    public static string? CommandLineOutputFolder { get; private set; }
-    
-    protected override void OnStartup(StartupEventArgs e)
+    public partial class App : Application
     {
-        base.OnStartup(e);
-        
-        // Parse command line arguments
-        ParseCommandLineArgs(e.Args);
-        
-        // Set up any global exception handling here
-        AppDomain.CurrentDomain.UnhandledException += (s, args) =>
+        private ServiceProvider? _serviceProvider;
+        public static string? CommandLineOutputFolder { get; set; }
+
+        protected override void OnStartup(StartupEventArgs e)
         {
-            var ex = args.ExceptionObject as Exception;
-            MessageBox.Show(
-                $"An unexpected error occurred: {ex?.Message}",
-                "PDF'd Error",
-                MessageBoxButton.OK,
-                MessageBoxImage.Error);
-        };
-    }
-    
-    private void ParseCommandLineArgs(string[] args)
-    {
-        for (int i = 0; i < args.Length; i++)
+            var serviceCollection = new ServiceCollection();
+            ConfigureServices(serviceCollection);
+            _serviceProvider = serviceCollection.BuildServiceProvider();
+
+            var mainWindow = _serviceProvider.GetRequiredService<MainWindow>();
+            mainWindow.Show();
+
+            base.OnStartup(e);
+        }
+
+        private void ConfigureServices(IServiceCollection services)
         {
-            if ((args[i].Equals("-outputfolder", StringComparison.OrdinalIgnoreCase) ||
-                 args[i].Equals("--outputfolder", StringComparison.OrdinalIgnoreCase) ||
-                 args[i].Equals("-o", StringComparison.OrdinalIgnoreCase)) 
-                && i + 1 < args.Length)
-            {
-                CommandLineOutputFolder = args[i + 1];
-                // Create directory if it doesn't exist
-                if (!System.IO.Directory.Exists(CommandLineOutputFolder))
-                {
-                    System.IO.Directory.CreateDirectory(CommandLineOutputFolder);
-                }
-            }
+            // Core PDF Processing Services
+            services.AddSingleton<IXpdfToolsService, XpdfToolsService>();
+            services.AddSingleton<IConversionService, ConversionService>();
+            services.AddSingleton<IOcrService, OcrService>();
+            services.AddSingleton<IGhostscriptService, GhostscriptService>();
+            services.AddSingleton<IPdfIntelligenceService, PdfIntelligenceService>();
+            
+            // ViewModels
+            services.AddTransient<MainViewModel>();
+            
+            // Views
+            services.AddSingleton<MainWindow>();
+        }
+
+        protected override void OnExit(ExitEventArgs e)
+        {
+            _serviceProvider?.Dispose();
+            base.OnExit(e);
         }
     }
 }

@@ -4,7 +4,8 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
-        Title="PDF'd - Stop PDFing Around"
+        Title="PDFd - PDF Processing"
+        Background="#1a1a1a"
         Height="650" Width="1100"
         MinHeight="450" MinWidth="700"
         WindowStartupLocation="CenterScreen"
@@ -42,7 +43,7 @@
                                    FontSize="28" 
                                    FontWeight="Bold"
                                    Foreground="{StaticResource AccentBrush}"/>
-                        <TextBlock Text="Drop PDFs here or click to browse. Get PDF'd."
+                        <TextBlock Text="Drop PDFs here or click to browse."
                                    FontSize="14"
                                    Foreground="{StaticResource SubtleTextBrush}"
                                    Margin="0,4,0,0"/>
@@ -87,7 +88,7 @@
                 <Border x:Name="DropZone"
                         Margin="20"
                         Background="{StaticResource SurfaceBrush}"
-                        BorderBrush="{StaticResource AccentBrush}"
+                        BorderBrush="#1a1a1a"
                         BorderThickness="2"
                         CornerRadius="8"
                         Cursor="Hand"
@@ -175,7 +176,7 @@
                     <!-- Process Button -->
                     <Button Grid.Column="1"
                             x:Name="ProcessButton"
-                            Content="Get PDF'd"
+                            Content="Process Files"
                             Padding="30,10"
                             FontSize="16"
                             IsEnabled="False"

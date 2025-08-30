@@ -1,0 +1,96 @@
+# PDF'd Development Rules for Cline
+
+## Core Philosophy
+You are working on PDF'd - a Windows desktop app that does 4 things perfectly: Convert PDFs to Word, Compress PDFs, Batch Process, and Analyze PDFs. Nothing else.
+
+## Architecture Rules
+
+### DO:
+- Use the existing Xpdf command-line tools (pdftotext.exe, pdfinfo.exe, etc.)
+- Use Ghostscript for compression (already installed)
+- Keep services simple - one responsibility each
+- Use process isolation for external tools
+- Handle errors gracefully without crashing
+- Always validate PDF files before processing
+- Use async/await for all I/O operations
+
+### DON'T:
+- Add new features beyond the core 4
+- Install unnecessary NuGet packages
+- Create complex abstractions or patterns
+- Modify the external tool integration approach
+- Add web APIs or cloud features
+- Implement custom PDF parsing (use Xpdf tools)
+- Add authentication or user management
+
+## Code Style
+
+### ALWAYS:
+- Keep methods under 30 lines
+- One class per file
+- Explicit types (no var for complex types)
+- Guard clauses at method start
+- Dispose of processes properly
+- Use meaningful names
+
+### NEVER:
+- Leave TODO comments
+- Comment out code (delete it)
+- Use reflection
+- Catch generic Exception (be specific)
+- Modify original files (always work on copies)
+- Use dynamic types
+
+## Project Structure
+```
+PDFd.Core/
+  Services/      # Business logic only
+  Interfaces/    # Contract definitions
+  Models/        # Data structures
+  Tools/
+    Xpdf/       # Xpdf executables
+    Ghostscript/ # Optional bundled GS
+
+PDFd.UI/
+  Views/        # WPF XAML only
+  ViewModels/   # MVVM view models
+```
+
+## Performance Requirements
+- Startup < 1 second
+- Memory < 500MB per operation
+- Process 10MB/second minimum
+- Support 10,000 file batches
+
+## Testing Approach
+- Test with real PDFs from the test-data folder
+- Always test with encrypted PDFs
+- Test with scanned PDFs
+- Test with 10,000 file batches
+- Test with corrupted PDFs
+
+## When Adding Code
+1. Does it serve one of the 4 core features?
+2. Does it use existing tools (not reinvent)?
+3. Is it under 100 lines?
+4. Does it handle errors properly?
+5. Will it work with 10,000 files?
+
+If any answer is NO, reconsider the approach.
+
+## External Tools
+- Xpdf tools are in PDFd.Core/Tools/Xpdf/
+- Ghostscript uses system installation or bundled
+- Never modify the tool executables
+- Always use process isolation
+- Always handle tool failures gracefully
+
+## UI Guidelines
+- WPF only, no web views
+- Minimal UI - focus on functionality
+- Show progress for long operations
+- Never block the UI thread
+- Display clear error messages
+
+## Remember
+This is a $15.99 tool that does 4 things perfectly. Not 5 things okay, not 10 things poorly. Four things, perfectly.

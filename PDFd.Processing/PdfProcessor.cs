@@ -13,16 +13,16 @@ public sealed class PdfProcessor : IPdfProcessor, IDisposable
     public PdfProcessor(int maxConcurrency = 4)
     {
         _semaphore = new SemaphoreSlim(maxConcurrency, maxConcurrency);
-        
+
         // Try multiple paths to find tools
         var possiblePaths = new[]
-        {
-            Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Tools"),
-            Path.Combine(Directory.GetCurrentDirectory(), "Tools"),
-            Path.Combine(Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location) ?? "", "Tools"),
-            @"D:\Dev\PDFd\PDFd.UI\Tools" // Hardcoded fallback for testing
-        };
-        
+{
+    Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Tools", "Xpdf"),
+    Path.Combine(Directory.GetCurrentDirectory(), "Tools", "Xpdf"),
+    Path.Combine(Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location) ?? "", "Tools", "Xpdf"),
+    @"D:\Dev\pdfd\PDFd.UI\bin\Debug\net8.0-windows\Tools\Xpdf" // Updated hardcoded fallback
+};
+
         foreach (var path in possiblePaths)
         {
             if (Directory.Exists(path) && File.Exists(Path.Combine(path, "pdftotext.exe")))
@@ -33,7 +33,7 @@ public sealed class PdfProcessor : IPdfProcessor, IDisposable
                 break;
             }
         }
-        
+
         if (!_useExternalTools)
         {
             _toolsPath = "";
@@ -62,7 +62,7 @@ public sealed class PdfProcessor : IPdfProcessor, IDisposable
             var stopwatch = Stopwatch.StartNew();
             var converter = new Converters.PdfToWordConverter(_toolsPath, _useExternalTools);
             var result = await converter.ConvertAsync(document, options, ct);
-            
+
             stopwatch.Stop();
             return result with { ProcessingTime = stopwatch.Elapsed };
         }
@@ -86,7 +86,7 @@ public sealed class PdfProcessor : IPdfProcessor, IDisposable
             var stopwatch = Stopwatch.StartNew();
             var compressor = new Compressors.PdfCompressor();
             var result = await compressor.CompressAsync(document, options, ct);
-            
+
             stopwatch.Stop();
             return result with { ProcessingTime = stopwatch.Elapsed };
         }
@@ -114,7 +114,7 @@ public sealed class PdfProcessor : IPdfProcessor, IDisposable
                     RedirectStandardOutput = true,
                     RedirectStandardError = true
                 });
-                
+
                 await Task.Run(() => process!.WaitForExit(), ct);
                 return process!.ExitCode == 0;
             }
@@ -123,7 +123,7 @@ public sealed class PdfProcessor : IPdfProcessor, IDisposable
                 return false;
             }
         }
-        
+
         return true;
     }
 
@@ -136,7 +136,7 @@ public sealed class PdfProcessor : IPdfProcessor, IDisposable
             var fileInfo = new FileInfo(filePath);
             var pageCount = 1;
             var isEncrypted = false;
-            
+
             if (_useExternalTools)
             {
                 var pdfInfo = Path.Combine(_toolsPath, "pdfinfo.exe");
@@ -149,10 +149,10 @@ public sealed class PdfProcessor : IPdfProcessor, IDisposable
                     RedirectStandardOutput = true,
                     RedirectStandardError = true
                 });
-                
+
                 var output = await process!.StandardOutput.ReadToEndAsync();
                 await Task.Run(() => process.WaitForExit(), ct);
-                
+
                 var lines = output.Split('\n');
                 foreach (var line in lines)
                 {
@@ -167,7 +167,7 @@ public sealed class PdfProcessor : IPdfProcessor, IDisposable
                     }
                 }
             }
-            
+
             return new Domain.Models.PdfDocument
             {
                 FilePath = filePath,

@@ -6,6 +6,13 @@
   </ItemGroup>
 
   <ItemGroup>
+    <None Include="..\PDFd.Core\Tools\Xpdf\*.exe">
+      <Link>Tools\Xpdf\%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
   </ItemGroup>
 

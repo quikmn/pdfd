@@ -236,14 +236,14 @@ public partial class MainWindow : Window
             // Update file count label
             var totalSize = _selectedFiles.Sum(f => new FileInfo(f).Length);
             FileCountLabel.Text = $"{_selectedFiles.Count} files • {FileService.FormatFileSize(totalSize)}";
-            ProcessButton.Content = $"Get PDF'd ({_selectedFiles.Count})";
+            ProcessButton.Content = $"Process Files ({_selectedFiles.Count})";
         }
         else
         {
             EmptyState.Visibility = Visibility.Visible;
             FileListContainer.Visibility = Visibility.Collapsed;
             FileCountLabel.Text = "";
-            ProcessButton.Content = "Get PDF'd";
+            ProcessButton.Content = "Process Files";
         }
     }
     
